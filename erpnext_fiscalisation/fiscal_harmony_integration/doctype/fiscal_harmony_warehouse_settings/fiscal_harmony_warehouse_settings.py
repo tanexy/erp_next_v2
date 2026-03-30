@@ -3,13 +3,9 @@
 
 import frappe
 from frappe.model.document import Document
+from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
 
-class FiscalHarmonyWarehouseSettings(Document):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
-        self.api = FiscalHarmonyBase(self)
-
+class FiscalHarmonyWarehouseSettings(Document, FiscalHarmonyBase):
     def validate(self):
         """Validate the Fiscal Harmony Warehouse Settings form data."""
         import re
@@ -20,7 +16,7 @@ class FiscalHarmonyWarehouseSettings(Document):
     @frappe.whitelist()
     def check_supported_currencies(self):
         """Display a list of currency codes supported by Fiscal Harmony."""
-        response = self.api.make_request("/currencymapping/supported-currencies")
+        response = self.make_request("/currencymapping/supported-currencies")
         if not response.ok:
             frappe.throw(f"{response.status_code}: {response.reason}")
 
@@ -34,7 +30,7 @@ class FiscalHarmonyWarehouseSettings(Document):
     @frappe.whitelist()
     def check_user_profile(self):
         """Updates the Fiscal Harmony user profile."""
-        response = self.api.make_request("/profile")
+        response = self.make_request("/profile")
         if not response.ok:
             frappe.throw("Unable to verify user profile.")
 
@@ -46,7 +42,7 @@ class FiscalHarmonyWarehouseSettings(Document):
     @frappe.whitelist()
     def validate_currency_mappings(self):
         """Validate the currency mappings."""
-        self.api.process_mappings(
+        self.process_mappings(
             "currency",
             {
                 "SourceCurrency": "system_currency",
@@ -57,7 +53,7 @@ class FiscalHarmonyWarehouseSettings(Document):
     @frappe.whitelist()
     def validate_tax_mappings(self):
         """Validate the tax mappings."""
-        self.api.process_mappings(
+        self.process_mappings(
             "tax",
             {
                 "TaxCode": "tax_code",
@@ -66,50 +62,15 @@ class FiscalHarmonyWarehouseSettings(Document):
         )
 
     @frappe.whitelist()
-    def download_fiscal_pdf(self, signature: "Document") -> bytes | None:
-        """Download the fiscal PDF listed on the signature and attach to the invoice.
-
-        Args:
-            signature (Document): The document that stores the fiscal result.
-
-        Returns:
-            bytes|None: Returns the content of the downloaded PDF."""
-        return self.api.download_fiscal_pdf(signature)
-
-    def fetch_signature_data(self, signature: "Document"):
-        """Fetches the data of an already fiscalised signature that did not have its data returned
-            via webhook.
-
-        Args:
-            signature (Document): The document that stores the fiscal result."""
-        return self.api.fetch_signature_data(signature)
-
-    def fiscalise_transaction(self, signature: "Document"):
-        """Fiscalises the invoice/credit note attached to the given signature.
-
-        Args:
-            signature (Document): The document that stores the fiscal result."""
-        return self.api.fiscalise_transaction(signature)
-
-    @frappe.whitelist()
-    def get_device_info(self):
-        """Displays the Fiscal Harmony fiscal device config to the user."""
-        return self.api.get_device_info("Warehouse Fiscal Device Info")
-
-    @frappe.whitelist()
     def validate_api_details(self, api_key: str, api_secret: str):
-        """Validate the provided API details, and submit them if they are correct.
+        """Validate the provided API details, and submit them if they are correct."""
 
-        Args:
-            api_key (str): The API Key to authenticate with Fiscal Harmony.
-            api_secret (str): The API Secret to authenticate with Fiscal Harmony."""
-
-        headers = self.api.get_headers(api_key)
+        headers = self.get_headers(api_key)
 
         try:
             import requests
             response = requests.get(
-                self.api.get_request_url("/fiscaldevice"),
+                self.get_request_url("/fiscaldevice"),
                 headers=headers,
                 timeout=30,
             )
@@ -133,7 +94,7 @@ class FiscalHarmonyWarehouseSettings(Document):
                         "Failed to authenticate. Please check provided details."
                     )
 
-        self.api.update_last_successful_request()
+        self.update_last_successful_request()
         self.api_key = api_key
         self.api_secret = api_secret
         self.save()

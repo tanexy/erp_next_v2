@@ -27,6 +27,10 @@ frappe.ui.form.on("Fiscal Harmony Settings", {
     }
   },
 
+  enable_multiple_branches(frm) {
+    frm.refresh_fields(['warehouse_configurations_section', 'warehouse_configurations']);
+  },
+
   multiple_companies(frm) {
     // Avoid refreshing everything — just update fields
     if (frm.doc.multiple_companies) {

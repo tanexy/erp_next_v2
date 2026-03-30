@@ -20,6 +20,7 @@ from erpnext_fiscalisation.fiscal_harmony_integration.doctype.fiscal_harmony_log
     fh_log,
     FiscalHarmonyLogData,
 )
+from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
 
 if TYPE_CHECKING:
     from frappe.types import DF
@@ -58,17 +59,9 @@ def validate_api_details(api_key, api_secret):
     return doc.validate_api_details(api_key, api_secret)
 
 
-class FiscalHarmonySettings(Document):
+class FiscalHarmonySettings(Document, FiscalHarmonyBase):
     """This doctype manages interactions with the Fiscal Harmony API."""
 
-    __ERROR_TITLE = "Fiscal Harmony Error"
-    __TIMEOUT = 30
-    """Default timeout for requests."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
-        self.api = FiscalHarmonyBase(self)
 
     if TYPE_CHECKING:
         endpoint: DF.Data
@@ -91,7 +84,7 @@ class FiscalHarmonySettings(Document):
     def check_supported_currencies(self):
         """Display a list of currency codes supported by Fiscal Harmony."""
 
-        response = self.api.make_request("/currencymapping/supported-currencies")
+        response = self.make_request("/currencymapping/supported-currencies")
         if not response.ok:
             frappe.throw(f"{response.status_code}: {response.reason}")
 
@@ -107,7 +100,7 @@ class FiscalHarmonySettings(Document):
     def check_user_profile(self):
         """Updates the Fiscal Harmony user profile."""
 
-        response = self.api.make_request("/profile")
+        response = self.make_request("/profile")
 
         if not response.ok:
             frappe.throw(
@@ -125,38 +118,6 @@ class FiscalHarmonySettings(Document):
         self.user_profile_id = data.get("Id", "")
         self.save()
 
-    @frappe.whitelist()
-    def download_fiscal_pdf(self, signature: "FiscalSignature") -> bytes | None:
-        """Download the fiscal PDF listed on the signature and attach to the invoice.
-
-        Args:
-            signature (FiscalSignature): The document that stores the fiscal result.
-
-        Returns:
-            bytes|None: Returns the content of the downloaded PDF."""
-        return self.api.download_fiscal_pdf(signature)
-
-    @frappe.whitelist()
-    def fetch_signature_data(self, signature: "FiscalSignature"):
-        """Fetches the data of an already fiscalised signature that did not have its data returned\
-            via webhook.
-
-        Args:
-            signature (FiscalSignature): The document that stores the fiscal result."""
-        return self.api.fetch_signature_data(signature)
-
-    @frappe.whitelist()
-    def fiscalise_transaction(self, signature: "FiscalSignature"):
-        """Fiscalises the invoice/credit note attached to the given signature.
-
-        Args:
-            signature (FiscalSignature): The document that stores the fiscal result."""
-        return self.api.fiscalise_transaction(signature)
-
-    @frappe.whitelist()
-    def get_device_info(self):
-        """Displays the Fiscal Harmony fiscal device config to the user."""
-        return self.api.get_device_info("Fiscal Device Info")
 
     def test_signature(self, received_signature: str, raw_data: str) -> bool:
         """Validate that the received signature is correct for the data received.
@@ -168,7 +129,7 @@ class FiscalHarmonySettings(Document):
         Returns:
             bool: Whether the received signature is valid."""
 
-        expected_signature = self.api.sign_payload(raw_data, self.get_active_api_secret())
+        expected_signature = self.sign_payload(raw_data, self.get_active_api_secret())
 
         return received_signature == expected_signature
 
@@ -179,13 +140,13 @@ class FiscalHarmonySettings(Document):
             api_key (str): The API Key to authenticate with Fiscal Harmony.
             api_secret (str): The API Secret to authenticate with Fiscal Harmony."""
 
-        headers = self.api.get_headers(api_key)
+        headers = self.get_headers(api_key)
 
         try:
             response = requests.get(
-                self.api.get_request_url("/fiscaldevice"),
+                self.get_request_url("/fiscaldevice"),
                 headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
+                timeout=30,
             )
         except TimeoutError:
             frappe.throw(
@@ -210,7 +171,7 @@ class FiscalHarmonySettings(Document):
                         "Failed to authenticate. Please check provided details."
                     )
 
-        self.api.update_last_successful_request()
+        self.update_last_successful_request()
         self.api_key = api_key
         self.api_secret = api_secret
         self.save()
@@ -224,7 +185,7 @@ class FiscalHarmonySettings(Document):
     def validate_currency_mappings(self):
         """Validate the currency mappings."""
 
-        self.api.process_mappings(
+        self.process_mappings(
             "currency",
             {
                 "SourceCurrency": "system_currency",
@@ -236,13 +197,46 @@ class FiscalHarmonySettings(Document):
     def validate_tax_mappings(self):
         """Validate the tax mappings."""
 
-        self.api.process_mappings(
+        self.process_mappings(
             "tax",
             {
                 "TaxCode": "tax_code",
                 "DestinationTaxId": "destination_tax_id",
             },
         )
+
+    @frappe.whitelist()
+    def download_fiscal_pdf(self, signature: "FiscalSignature") -> bytes | None:
+        """Download the fiscal PDF listed on the signature and attach to the invoice.
+
+        Args:
+            signature (FiscalSignature): The document that stores the fiscal result.
+
+        Returns:
+            bytes|None: Returns the content of the downloaded PDF."""
+        return super().download_fiscal_pdf(signature)
+
+    @frappe.whitelist()
+    def fetch_signature_data(self, signature: "FiscalSignature"):
+        """Fetches the data of an already fiscalised signature that did not have its data returned\
+            via webhook.
+
+        Args:
+            signature (FiscalSignature): The document that stores the fiscal result."""
+        return super().fetch_signature_data(signature)
+
+    @frappe.whitelist()
+    def fiscalise_transaction(self, signature: "FiscalSignature"):
+        """Fiscalises the invoice/credit note attached to the given signature.
+
+        Args:
+            signature (FiscalSignature): The document that stores the fiscal result."""
+        return super().fiscalise_transaction(signature)
+
+    @frappe.whitelist()
+    def get_device_info(self):
+        """Displays the Fiscal Harmony fiscal device config to the user."""
+        return super().get_device_info("Global Fiscal Device Info")
 
     # Add these fields to your TYPE_CHECKING section:
     if TYPE_CHECKING:
@@ -409,13 +403,13 @@ class FiscalHarmonySettings(Document):
             bool: True if credentials are valid, False otherwise
         """
 
-        headers = self.api.get_headers(api_key)
+        headers = self.get_headers(api_key)
 
         try:
             response = requests.get(
-                self.api.get_request_url("/fiscaldevice"),
+                self.get_request_url("/fiscaldevice"),
                 headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
+                timeout=30,
             )
             return response.ok
         except (TimeoutError, requests.exceptions.RequestException):
