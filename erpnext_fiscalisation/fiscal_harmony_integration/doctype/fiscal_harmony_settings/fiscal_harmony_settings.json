@@ -14,6 +14,7 @@
   "disabled",
   "include_hs_codes",
   "attach_local_print",
+  "enable_multiple_branches",
   "authentication_section",
   "api_key",
   "column_break_iofx",
@@ -154,6 +155,13 @@
    "fieldname": "attach_local_print",
    "fieldtype": "Check",
    "label": "Attach Local Print"
+  },
+  {
+   "default": "0",
+   "description": "Enable this to allow warehouse-specific fiscalisation settings (API keys, secrets, mappings).",
+   "fieldname": "enable_multiple_branches",
+   "fieldtype": "Check",
+   "label": "Enable Multiple Branches"
   },
   {
     "fieldname": "multiple_companies_section",

@@ -1,6 +1,6 @@
 // Copyright (c) 2025, Eskill Trading (Pvt) Ltd
 
-frappe.ui.form.on("Fiscal Harmony Branch Settings", {
+frappe.ui.form.on("Fiscal Harmony Warehouse Settings", {
   refresh(frm) {
     // Add Custom Buttons
     frm.add_custom_button(__("Check User Profile"), () => checkUserProfile(frm));

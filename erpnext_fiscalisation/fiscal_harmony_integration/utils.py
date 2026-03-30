@@ -121,6 +121,44 @@ class FiscalHarmonyBase:
     def encode_data(self, data: dict) -> str:
         return json.dumps(data, separators=(",", ":"), sort_keys=True)
 
+    def get_device_info(self, title: str = "Fiscal Device Info"):
+        """Displays the Fiscal Harmony fiscal device config to the user."""
+
+        response = self.make_request("/fiscaldevice")
+        if not response.ok:
+            frappe.throw("Failed to fetch the device status.")
+
+        def print_value(key: str, value: str, indent: int = 0) -> str:
+            if (
+                    isinstance(value, str)
+                    and value.startswith(r"{")
+                    and value.endswith(r"}")
+            ):
+                value = json.loads(value)
+
+            message = f'<strong style="margin-left: {indent}rem">{key}</strong>:'
+            if isinstance(value, dict):
+                message += "<br/>"
+                for inner_key, inner_value in value.items():
+                    message += print_value(inner_key, inner_value, indent + 1)
+
+            elif isinstance(value, list):
+                message += '<br/><ol style="margin-bottom: 0">'
+                for item in value:
+                    message += f"<li>{print_value(key, item, indent + 1)}</li>"
+                message += "</ol>"
+
+            else:
+                message += f" {value}<br/>"
+
+            return message
+
+        message = ""
+        for key, value in response.json().items():
+            message += print_value(key, value)
+
+        frappe.msgprint(message, title)
+
     def download_fiscal_pdf(self, signature: "Document") -> bytes | None:
         """Download the fiscal PDF listed on the signature and attach to the invoice.
 
@@ -157,6 +195,22 @@ class FiscalHarmonyBase:
 
             log_data["status"] = "Success"
             self.update_last_successful_request()
+
+        except (TimeoutError, requests.exceptions.Timeout):
+            log_data["status"] = "Failure"
+            log_data["error_details"] = "The connection timed out."
+            log_data["response_status_code"] = 500
+            fh_log(log_data)
+            frappe.throw("The connection timed out.")
+
+        except requests.exceptions.HTTPError:
+            log_data["error_details"] = response.reason
+            if response.status_code == 401:
+                log_data["status"] = "Unauthorised"
+            else:
+                log_data["status"] = "Failure"
+            fh_log(log_data)
+            frappe.throw(f"HTTP Error: {response.reason}")
 
         except Exception as e:
             log_data["status"] = "Failure"
@@ -221,6 +275,22 @@ class FiscalHarmonyBase:
             log_data["status"] = "Success"
             self.update_last_successful_request()
 
+        except (TimeoutError, requests.exceptions.Timeout):
+            signature.is_retry = True
+            log_data["status"] = "Failure"
+            log_data["error_details"] = "Timed out whilst fetching status."
+            log_data["response_status_code"] = 500
+            fh_log(log_data)
+
+        except requests.exceptions.HTTPError:
+            signature.is_retry = True
+            log_data["error_details"] = response.reason
+            if response.status_code == 401:
+                log_data["status"] = "Unauthorised"
+            else:
+                log_data["status"] = "Failure"
+            fh_log(log_data)
+
         except Exception as e:
             signature.is_retry = True
             log_data["status"] = "Failure"
@@ -269,6 +339,22 @@ class FiscalHarmonyBase:
             signature.fiscal_harmony_id = response.text
             log_data["status"] = "Success"
             self.update_last_successful_request()
+
+        except (TimeoutError, requests.exceptions.Timeout):
+            signature.is_retry = True
+            log_data["status"] = "Failure"
+            log_data["error_details"] = "Timed out whilst signing transaction."
+            log_data["response_status_code"] = 500
+            fh_log(log_data)
+
+        except requests.exceptions.HTTPError:
+            signature.is_retry = True
+            log_data["error_details"] = response.reason
+            if response.status_code == 401:
+                log_data["status"] = "Unauthorised"
+            else:
+                log_data["status"] = "Failure"
+            fh_log(log_data)
 
         except Exception as e:
             signature.is_retry = True
