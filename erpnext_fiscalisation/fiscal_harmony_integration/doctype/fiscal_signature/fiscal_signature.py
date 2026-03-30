@@ -159,13 +159,15 @@ class FiscalSignature(Document):
     def get_fiscal_settings(self):
         """Determine and return the appropriate fiscal settings (Branch or Global)."""
 
-        branch = frappe.get_value("Sales Invoice", self.sales_invoice, "branch")
-        if branch:
-            branch_settings_name = frappe.db.exists("Fiscal Harmony Branch Settings", {"branch": branch})
-            if branch_settings_name:
-                return frappe.get_doc("Fiscal Harmony Branch Settings", branch_settings_name)
+        fiscal_settings = frappe.get_doc("Fiscal Harmony Settings")
+        if fiscal_settings.has_multiple_branches:
+            branch = frappe.get_value("Sales Invoice", self.sales_invoice, "branch")
+            if branch:
+                branch_settings_name = frappe.db.exists("Fiscal Harmony Branch Settings", {"branch": branch})
+                if branch_settings_name:
+                    return frappe.get_doc("Fiscal Harmony Branch Settings", branch_settings_name)
 
-        return frappe.get_doc("Fiscal Harmony Settings")
+        return fiscal_settings
 
     def __fiscalise(self):
         """Submit the signature details for fiscalisation."""

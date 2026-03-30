@@ -94,42 +94,7 @@ class FiscalHarmonyBranchSettings(Document):
     @frappe.whitelist()
     def get_device_info(self):
         """Displays the Fiscal Harmony fiscal device config to the user."""
-
-        response = self.api.make_request("/fiscaldevice")
-        if not response.ok:
-            frappe.throw("Failed to fetch the device status.")
-
-        def print_value(key: str, value: str, indent: int = 0) -> str:
-            import json
-            if (
-                    isinstance(value, str)
-                    and value.startswith(r"{")
-                    and value.endswith(r"}")
-            ):
-                value = json.loads(value)
-
-            message = f'<strong style="margin-left: {indent}rem">{key}</strong>:'
-            if isinstance(value, dict):
-                message += "<br/>"
-                for inner_key, inner_value in value.items():
-                    message += print_value(inner_key, inner_value, indent + 1)
-
-            elif isinstance(value, list):
-                message += '<br/><ol style="margin-bottom: 0">'
-                for item in value:
-                    message += f"<li>{print_value(key, item, indent + 1)}</li>"
-                message += "</ol>"
-
-            else:
-                message += f" {value}<br/>"
-
-            return message
-
-        message = ""
-        for key, value in response.json().items():
-            message += print_value(key, value)
-
-        frappe.msgprint(message, "Fiscal Device Info")
+        return self.api.get_device_info("Branch Fiscal Device Info")
 
     @frappe.whitelist()
     def validate_api_details(self, api_key: str, api_secret: str):

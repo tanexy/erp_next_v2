@@ -103,6 +103,7 @@ class FiscalHarmonySettings(Document):
 
         frappe.msgprint(message)
 
+    @frappe.whitelist()
     def check_user_profile(self):
         """Updates the Fiscal Harmony user profile."""
 
@@ -124,6 +125,7 @@ class FiscalHarmonySettings(Document):
         self.user_profile_id = data.get("Id", "")
         self.save()
 
+    @frappe.whitelist()
     def download_fiscal_pdf(self, signature: "FiscalSignature") -> bytes | None:
         """Download the fiscal PDF listed on the signature and attach to the invoice.
 
@@ -134,6 +136,7 @@ class FiscalHarmonySettings(Document):
             bytes|None: Returns the content of the downloaded PDF."""
         return self.api.download_fiscal_pdf(signature)
 
+    @frappe.whitelist()
     def fetch_signature_data(self, signature: "FiscalSignature"):
         """Fetches the data of an already fiscalised signature that did not have its data returned\
             via webhook.
@@ -142,6 +145,7 @@ class FiscalHarmonySettings(Document):
             signature (FiscalSignature): The document that stores the fiscal result."""
         return self.api.fetch_signature_data(signature)
 
+    @frappe.whitelist()
     def fiscalise_transaction(self, signature: "FiscalSignature"):
         """Fiscalises the invoice/credit note attached to the given signature.
 
@@ -149,46 +153,10 @@ class FiscalHarmonySettings(Document):
             signature (FiscalSignature): The document that stores the fiscal result."""
         return self.api.fiscalise_transaction(signature)
 
+    @frappe.whitelist()
     def get_device_info(self):
         """Displays the Fiscal Harmony fiscal device config to the user."""
-
-        response = self.__make_request("/fiscaldevice")
-        if not response.ok:
-            frappe.throw(
-                "Failed to fetch the device status.",
-                title=FiscalHarmonySettings.__ERROR_TITLE,
-            )
-
-        def print_value(key: str, value: str, indent: int = 0) -> str:
-            if (
-                    isinstance(value, str)
-                    and value.startswith(r"{")
-                    and value.endswith(r"}")
-            ):
-                value = json.loads(value)
-
-            message = f'<strong style="margin-left: {indent}rem">{key}</strong>:'
-            if isinstance(value, dict):
-                message += "<br/>"
-                for inner_key, inner_value in value.items():
-                    message += print_value(inner_key, inner_value, indent + 1)
-
-            elif isinstance(value, list):
-                message += '<br/><ol style="margin-bottom: 0">'
-                for item in value:
-                    message += f"<li>{print_value(key, item, indent + 1)}</li>"
-                message += "</ol>"
-
-            else:
-                message += f" {value}<br/>"
-
-            return message
-
-        message = ""
-        for key, value in response.json().items():
-            message += print_value(key, value)
-
-        frappe.msgprint(message, "Fiscal Device Info")
+        return self.api.get_device_info("Fiscal Device Info")
 
     def test_signature(self, received_signature: str, raw_data: str) -> bool:
         """Validate that the received signature is correct for the data received.
@@ -200,7 +168,7 @@ class FiscalHarmonySettings(Document):
         Returns:
             bool: Whether the received signature is valid."""
 
-        expected_signature = self.__sign_payload(raw_data)
+        expected_signature = self.api.sign_payload(raw_data, self.get_active_api_secret())
 
         return received_signature == expected_signature
 

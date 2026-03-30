@@ -152,6 +152,8 @@
  "modified_by": "Administrator",
  "module": "Fiscal Harmony Integration",
  "name": "Fiscal Harmony Branch Settings",
+ "naming_rule": "By fieldname",
+ "autoname": "field:branch",
  "owner": "Administrator",
  "permissions": [
   {
