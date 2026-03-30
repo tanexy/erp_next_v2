@@ -193,6 +193,17 @@ class FiscalHarmonySettings(Document, FiscalHarmonyBase):
             },
         )
 
+        if self.enable_multiple_branches:
+            for warehouse_config in self.warehouse_api_credentials:
+                warehouse_config.parent_doc = self
+                warehouse_config.process_mappings(
+                    "currency",
+                    {
+                        "SourceCurrency": "system_currency",
+                        "DestinationCurrency": "fiscal_harmony_currency",
+                    },
+                )
+
     @frappe.whitelist()
     def validate_tax_mappings(self):
         """Validate the tax mappings."""
@@ -204,6 +215,17 @@ class FiscalHarmonySettings(Document, FiscalHarmonyBase):
                 "DestinationTaxId": "destination_tax_id",
             },
         )
+
+        if self.enable_multiple_branches:
+            for warehouse_config in self.warehouse_api_credentials:
+                warehouse_config.parent_doc = self
+                warehouse_config.process_mappings(
+                    "tax",
+                    {
+                        "TaxCode": "tax_code",
+                        "DestinationTaxId": "destination_tax_id",
+                    },
+                )
 
     @frappe.whitelist()
     def download_fiscal_pdf(self, signature: "FiscalSignature") -> bytes | None:

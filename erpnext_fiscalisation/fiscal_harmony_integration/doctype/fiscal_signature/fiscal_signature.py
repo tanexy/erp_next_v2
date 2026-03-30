@@ -167,8 +167,12 @@ class FiscalSignature(Document):
                 warehouse = frappe.db.get_value("Sales Invoice Item", {"parent": self.sales_invoice}, "warehouse")
 
             if warehouse:
-                if frappe.db.exists("Fiscal Harmony Warehouse Settings", warehouse):
-                    return frappe.get_doc("Fiscal Harmony Warehouse Settings", warehouse)
+                for row in fiscal_settings.warehouse_api_credentials:
+                    if row.warehouse == warehouse:
+                        # Wrap the row to behave like a settings document for the mixin
+                        row.parent_doc = fiscal_settings
+                        # Ensure mappings are correctly prioritized later in the process
+                        return row
 
         return fiscal_settings
 
@@ -191,11 +195,23 @@ class FiscalSignature(Document):
         buyer_contact = self.__get_buyer_contact(transaction)
         line_items = self.__get_line_items(transaction)
 
+        warehouse = transaction.set_warehouse or (transaction.items[0].warehouse if transaction.items else None)
+
         currency_code = transaction.currency
-        for mapping in fiscal_settings.currency_mappings:
+        global_settings = fiscal_settings if getattr(fiscal_settings, "doctype", None) == "Fiscal Harmony Settings" else fiscal_settings.parent_doc
+
+        # Filter for warehouse-specific mapping first, then fallback to global
+        currency_mapping = None
+        for mapping in global_settings.currency_mappings:
             if mapping.system_currency == transaction.currency:
-                currency_code = mapping.fiscal_harmony_currency
-                break
+                if mapping.warehouse == warehouse:
+                    currency_mapping = mapping
+                    break
+                elif not mapping.warehouse and not currency_mapping:
+                    currency_mapping = mapping
+
+        if currency_mapping:
+            currency_code = currency_mapping.fiscal_harmony_currency
 
         data = {
             "InvoiceId": transaction.name,
@@ -231,11 +247,22 @@ class FiscalSignature(Document):
         buyer_contact = self.__get_buyer_contact(transaction)
         line_items = self.__get_line_items(transaction)
 
+        warehouse = transaction.set_warehouse or (transaction.items[0].warehouse if transaction.items else None)
+
         currency_code = transaction.currency
-        for mapping in fiscal_settings.currency_mappings:
+        global_settings = fiscal_settings if getattr(fiscal_settings, "doctype", None) == "Fiscal Harmony Settings" else fiscal_settings.parent_doc
+
+        currency_mapping = None
+        for mapping in global_settings.currency_mappings:
             if mapping.system_currency == transaction.currency:
-                currency_code = mapping.fiscal_harmony_currency
-                break
+                if mapping.warehouse == warehouse:
+                    currency_mapping = mapping
+                    break
+                elif not mapping.warehouse and not currency_mapping:
+                    currency_mapping = mapping
+
+        if currency_mapping:
+            currency_code = currency_mapping.fiscal_harmony_currency
 
         data = {
             "CreditNoteId": transaction.name,
@@ -268,12 +295,23 @@ class FiscalSignature(Document):
             list[dict]: The list of dictionaries detailing the sold items."""
 
         fiscal_settings = self.get_fiscal_settings()
+        warehouse = transaction.set_warehouse or (transaction.items[0].warehouse if transaction.items else None)
+
+        global_settings = fiscal_settings if getattr(fiscal_settings, "doctype", None) == "Fiscal Harmony Settings" else fiscal_settings.parent_doc
         tax_codes = {}
         default_tax_code = None
-        for tax_mapping in fiscal_settings.tax_mappings:
-            tax_codes[tax_mapping.tax_code] = tax_mapping.destination_tax_id
-            if tax_mapping.is_default:
-                default_tax_code = tax_mapping.tax_code
+
+        # Collect all relevant tax mappings for this warehouse (or global)
+        for tax_mapping in global_settings.tax_mappings:
+            if not tax_mapping.warehouse or tax_mapping.warehouse == warehouse:
+                # Prioritize warehouse-specific mapping
+                if tax_mapping.warehouse == warehouse or tax_mapping.tax_code not in tax_codes:
+                    tax_codes[tax_mapping.tax_code] = tax_mapping.destination_tax_id
+
+                if tax_mapping.is_default:
+                    # Warehouse specific default takes precedence
+                    if tax_mapping.warehouse == warehouse or not default_tax_code:
+                        default_tax_code = tax_mapping.tax_code
 
         line_items: list[dict] = []
         for item in transaction.items:
