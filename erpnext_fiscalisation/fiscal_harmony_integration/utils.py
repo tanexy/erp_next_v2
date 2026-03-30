@@ -101,6 +101,9 @@ class FiscalHarmonyBase:
         if hasattr(self, "get_active_api_secret"):
             return self.get_active_api_secret()
 
+        if getattr(self, "doctype", None) == "Fiscal Harmony Warehouse API Credential":
+            return frappe.utils.password.get_decrypted_password(self.doctype, self.name, "api_secret")
+
         return self.get_password("api_secret")
 
     def sign_payload(self, payload: str, api_secret: str) -> str:
@@ -113,7 +116,10 @@ class FiscalHarmonyBase:
 
     def update_last_successful_request(self):
         self.last_successful_request = datetime.now()
-        self.save(ignore_permissions=True)
+        if getattr(self, "doctype", None) == "Fiscal Harmony Settings":
+            self.save(ignore_permissions=True)
+        elif hasattr(self, "parent_doc"):
+            self.parent_doc.save(ignore_permissions=True)
 
     def encode_data(self, data: dict) -> str:
         return json.dumps(data, separators=(",", ":"), sort_keys=True)
@@ -275,25 +281,10 @@ class FiscalHarmonyBase:
         except (TimeoutError, requests.exceptions.Timeout):
             signature.is_retry = True
             log_data["status"] = "Failure"
-            log_data["error_details"] = "Timed out whilst fetching status."
-            log_data["response_status_code"] = 500
-            fh_log(log_data)
-
-        except (TimeoutError, requests.exceptions.Timeout):
-            signature.is_retry = True
-            log_data["status"] = "Failure"
             log_data["error_details"] = "Timed out whilst signing transaction."
             log_data["response_status_code"] = 500
             fh_log(log_data)
 
-        except requests.exceptions.HTTPError:
-            signature.is_retry = True
-            log_data["error_details"] = response.reason
-            if response.status_code == 401:
-                log_data["status"] = "Unauthorised"
-            else:
-                log_data["status"] = "Failure"
-            fh_log(log_data)
 
         except Exception as e:
             signature.is_retry = True
@@ -368,7 +359,14 @@ class FiscalHarmonyBase:
         mappings: set[int] = set()
         posting_url = self.get_request_url(f"/{route_name}mapping")
 
-        relevant_mappings = self.get(f"{route_name}_mappings")
+        # Get correct source of mappings (always from global settings)
+        is_global = getattr(self, "doctype", None) == "Fiscal Harmony Settings"
+        parent_doc = self if is_global else self.parent_doc
+        all_mappings = parent_doc.get(f"{route_name}_mappings")
+
+        # Filter mappings for this context (either specific warehouse or global)
+        context_warehouse = getattr(self, "warehouse", None)
+        relevant_mappings = [m for m in all_mappings if m.warehouse == context_warehouse]
 
         for mapping in relevant_mappings:
             data = get_data(mapping)

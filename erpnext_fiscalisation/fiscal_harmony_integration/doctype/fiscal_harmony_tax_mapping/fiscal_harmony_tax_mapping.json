@@ -9,6 +9,7 @@
   "tax_id",
   "column_break_xgdq",
   "is_default",
+  "warehouse",
   "section_break_rkka",
   "tax_field_type",
   "tax_code",
@@ -35,6 +36,12 @@
    "fieldname": "is_default",
    "fieldtype": "Check",
    "label": "Is Default"
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "label": "Warehouse",
+   "options": "Warehouse"
   },
   {
    "fieldname": "section_break_rkka",
