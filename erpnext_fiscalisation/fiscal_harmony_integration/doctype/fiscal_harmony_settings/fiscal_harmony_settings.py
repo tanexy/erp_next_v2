@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import requests
 
@@ -65,6 +65,11 @@ class FiscalHarmonySettings(Document):
     __TIMEOUT = 30
     """Default timeout for requests."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
+        self.api = FiscalHarmonyBase(self)
+
     if TYPE_CHECKING:
         endpoint: DF.Data
         user_profile_id: DF.Data
@@ -86,7 +91,7 @@ class FiscalHarmonySettings(Document):
     def check_supported_currencies(self):
         """Display a list of currency codes supported by Fiscal Harmony."""
 
-        response = self.__make_request("/currencymapping/supported-currencies")
+        response = self.api.make_request("/currencymapping/supported-currencies")
         if not response.ok:
             frappe.throw(f"{response.status_code}: {response.reason}")
 
@@ -101,7 +106,7 @@ class FiscalHarmonySettings(Document):
     def check_user_profile(self):
         """Updates the Fiscal Harmony user profile."""
 
-        response = self.__make_request("/profile")
+        response = self.api.make_request("/profile")
 
         if not response.ok:
             frappe.throw(
@@ -127,52 +132,7 @@ class FiscalHarmonySettings(Document):
 
         Returns:
             bytes|None: Returns the content of the downloaded PDF."""
-
-        if not signature.fiscal_harmony_filename:
-            frappe.log_error(
-                "Fiscal Harmony: PDF Error",
-                f"No PDF available for signature {signature.name}.",
-            )
-            return None
-
-        request_url = self.__get_request_url(
-            f"/download/{signature.fiscal_harmony_filename}"
-        )
-        headers = self.__get_headers()
-        log_data: FiscalHarmonyLogData = {
-            "request_url": request_url,
-        }
-
-        try:
-            response = requests.get(
-                request_url,
-                headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
-            )
-            log_data["response_status_code"] = response.status_code
-            log_data["response"] = str(response.content)
-            response.raise_for_status()
-
-            log_data["status"] = "Success"
-            self.__update_last_successful_request()
-
-        except TimeoutError:
-            log_data["status"] = "Failure"
-            log_data["error_details"] = ""
-            log_data["response_status_code"] = 500
-            fh_log(log_data)
-            frappe.throw("The connection timed out.")
-
-        except requests.exceptions.HTTPError:
-            log_data["error_details"] = response.reason
-            if response.status_code == 401:
-                log_data["status"] = "Unauthorised"
-            else:
-                log_data["status"] = "Failure"
-
-        fh_log(log_data)
-
-        return response.content
+        return self.api.download_fiscal_pdf(signature)
 
     def fetch_signature_data(self, signature: "FiscalSignature"):
         """Fetches the data of an already fiscalised signature that did not have its data returned\
@@ -180,147 +140,14 @@ class FiscalHarmonySettings(Document):
 
         Args:
             signature (FiscalSignature): The document that stores the fiscal result."""
-
-        if not signature.fiscal_harmony_id or signature.fdms_url:
-            return
-
-        url = self.__get_request_url("status")
-        data = [str(signature.fiscal_harmony_id)]
-        log_data: FiscalHarmonyLogData = {
-            "request_url": url,
-            "payload": json.dumps(data, indent=2),
-        }
-        payload = self.__encode_data(data)
-        headers = self.__get_signed_headers(payload)
-
-        try:
-            response = requests.post(
-                url,
-                data=payload,
-                headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
-            )
-            log_data["response_status_code"] = response.status_code
-            log_data["response"] = json.dumps(response.json(), indent=2)
-
-            response.raise_for_status()
-
-            response_data = response.json()[0]
-            signature.is_retry = (
-                    not response_data["Success"] and response_data["IsActionable"]
-            )
-            if response_data["Error"]:
-                signature.error = response_data["Error"]
-            elif signature.error:
-                signature.error = ""
-
-            if qr_data := response_data["QrData"]:
-                signature.fdms_url = qr_data["QrCodeUrl"]
-                signature.verification_code = qr_data["VerificationCode"]
-                signature.fiscal_day = qr_data["FiscalDay"]
-                signature.device_id = qr_data["DeviceId"]
-                signature.invoice_number = qr_data["InvoiceNumber"]
-
-            signature.fiscal_harmony_filename = response_data.get(
-                "FiscalInvoicePdf",
-                None,
-            )
-
-            log_data["status"] = "Success"
-            self.__update_last_successful_request()
-
-        except TimeoutError:
-            signature.is_retry = True
-            log_data["status"] = "Failure"
-            log_data["error_details"] = (
-                f"Timed out whilst signing {signature.sales_invoice}."
-            )
-            log_data["response_status_code"] = 500
-
-        except requests.exceptions.HTTPError:
-            signature.is_retry = True
-            log_data["error_details"] = (
-                f"{response.reason} whilst signing {signature.sales_invoice}."
-            )
-            match response.status_code:
-                case 400:
-                    log_data["status"] = "Invalid JSON"
-                case 401:
-                    log_data["status"] = "Unauthorised"
-                    log_data["signature_valid"] = False
-                case _:
-                    log_data["status"] = "Failure"
-
-        finally:
-            signature.save(ignore_permissions=True)
-            fh_log(log_data)
-
-            if signature.fiscal_harmony_filename:
-                signature.download_or_generate_pdf()
+        return self.api.fetch_signature_data(signature)
 
     def fiscalise_transaction(self, signature: "FiscalSignature"):
         """Fiscalises the invoice/credit note attached to the given signature.
 
         Args:
             signature (FiscalSignature): The document that stores the fiscal result."""
-
-        data = signature.get_payload_data()
-        payload = self.__encode_data(data)
-        headers = self.__get_signed_headers(payload)
-        url = self.__get_request_url(
-            "creditnote" if "CreditNoteId" in data else "invoice"
-        )
-        log_data: FiscalHarmonyLogData = {
-            "request_url": url,
-            "payload": json.dumps(data, indent=2),
-        }
-        if signature.is_retry:
-            signature.is_retry = False
-
-        try:
-            response = requests.post(
-                url,
-                data=payload,
-                headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
-            )
-            log_data["response_status_code"] = response.status_code
-            try:
-                log_data["response"] = json.dumps(response.json(), indent=2)
-            except json.JSONDecodeError:
-                log_data["response"] = response.text
-
-            response.raise_for_status()
-
-            signature.fiscal_harmony_id = response.text
-            log_data["status"] = "Success"
-            self.__update_last_successful_request()
-
-        except TimeoutError:
-            signature.is_retry = True
-            log_data["status"] = "Failure"
-            log_data["error_details"] = (
-                f"Timed out whilst signing {signature.sales_invoice}."
-            )
-            log_data["response_status_code"] = 500
-
-        except requests.exceptions.HTTPError:
-            signature.is_retry = True
-            log_data["error_details"] = (
-                f"{response.reason} whilst signing {signature.sales_invoice}."
-            )
-            match response.status_code:
-                case 400:
-                    log_data["status"] = "Invalid JSON"
-                case 401:
-                    log_data["status"] = "Unauthorised"
-                    log_data["signature_valid"] = False
-                case _:
-                    log_data["status"] = "Failure"
-
-        finally:
-            signature.save(ignore_permissions=True)
-            fh_log(log_data)
+        return self.api.fiscalise_transaction(signature)
 
     def get_device_info(self):
         """Displays the Fiscal Harmony fiscal device config to the user."""
@@ -384,11 +211,11 @@ class FiscalHarmonySettings(Document):
             api_key (str): The API Key to authenticate with Fiscal Harmony.
             api_secret (str): The API Secret to authenticate with Fiscal Harmony."""
 
-        headers = self.__get_headers(api_key)
+        headers = self.api.get_headers(api_key)
 
         try:
             response = requests.get(
-                self.__get_request_url("/fiscaldevice"),
+                self.api.get_request_url("/fiscaldevice"),
                 headers=headers,
                 timeout=FiscalHarmonySettings.__TIMEOUT,
             )
@@ -415,7 +242,7 @@ class FiscalHarmonySettings(Document):
                         "Failed to authenticate. Please check provided details."
                     )
 
-        self.__update_last_successful_request()
+        self.api.update_last_successful_request()
         self.api_key = api_key
         self.api_secret = api_secret
         self.save()
@@ -429,7 +256,7 @@ class FiscalHarmonySettings(Document):
     def validate_currency_mappings(self):
         """Validate the currency mappings."""
 
-        self.__process_mappings(
+        self.api.process_mappings(
             "currency",
             {
                 "SourceCurrency": "system_currency",
@@ -441,7 +268,7 @@ class FiscalHarmonySettings(Document):
     def validate_tax_mappings(self):
         """Validate the tax mappings."""
 
-        self.__process_mappings(
+        self.api.process_mappings(
             "tax",
             {
                 "TaxCode": "tax_code",
@@ -614,11 +441,11 @@ class FiscalHarmonySettings(Document):
             bool: True if credentials are valid, False otherwise
         """
 
-        headers = self.__get_headers(api_key)
+        headers = self.api.get_headers(api_key)
 
         try:
             response = requests.get(
-                self.__get_request_url("/fiscaldevice"),
+                self.api.get_request_url("/fiscaldevice"),
                 headers=headers,
                 timeout=FiscalHarmonySettings.__TIMEOUT,
             )
@@ -680,277 +507,18 @@ class FiscalHarmonySettings(Document):
             "company_2_name": self.company_2_name,
         }
 
-    def __encode_data(self, data: dict) -> str:
-        """Encodes the given data as a valid JSON string for transmitting.
 
-        Args:
-            data (dict): The data to be processed.
 
-        Returns:
-            str: The JSON representation of the given data."""
-
-        return json.dumps(data, separators=(",", ":"), sort_keys=True)
-
-    def __make_request(self, route: str) -> requests.Response:
-        """Generates and processes a standard GET request to the Fiscal Harmony API based on the\
-            given route.
-
-        Args:
-            route (str): The route to request against.
-
-        Returns:
-            requests.Response: The response from the Fiscal Harmony platform."""
-
-        request_url = self.__get_request_url(route)
-        headers = self.__get_headers()
-        log_data: FiscalHarmonyLogData = {
-            "request_url": request_url,
-        }
-
-        try:
-            response = requests.get(
-                request_url,
-                headers=headers,
-                timeout=FiscalHarmonySettings.__TIMEOUT,
-            )
-            log_data["response_status_code"] = response.status_code
-            log_data["response"] = json.dumps(response.json(), indent=2)
-            response.raise_for_status()
-
-            log_data["status"] = "Success"
-            self.__update_last_successful_request()
-
-        except TimeoutError:
-            log_data["status"] = "Failure"
-            log_data["error_details"] = ""
-            log_data["response_status_code"] = 500
-            fh_log(log_data)
-            frappe.throw("The connection timed out.")
-
-        except requests.exceptions.HTTPError:
-            log_data["error_details"] = response.reason
-            if response.status_code == 401:
-                log_data["status"] = "Unauthorised"
-            else:
-                log_data["status"] = "Failure"
-
-        fh_log(log_data)
-
-        return response
-
-    def __get_request_url(self, route: str) -> str:
-        """Constructs and returns the route for the API request.
-
-        Args:
-            route (str): The path for the request.
-
-        Returns:
-            str: The constructed URL."""
-
-        if route.startswith(r"/"):
-            return self.endpoint + route
-
-        return f"{self.endpoint}/{route}"
-
-    def __get_headers(self, api_key: str | None = None) -> dict[str, str]:
-        """Generate headers using the active company's API key."""
-
+    def get_active_api_key(self) -> str:
+        """Returns the current API key based on multi-company configuration."""
         if self.multiple_companies and self.active_company:
-            api_key = getattr(self, f"company_{self.active_company}_api_key")
-        else:
-            api_key = self.api_key if api_key is None else api_key
+            return getattr(self, f"company_{self.active_company}_api_key")
+        return self.api_key
 
-        return {
-            "X-Api-Key": api_key,
-            "X-Application": "ESkill",
-            "X-App-Station": "ERPNext",
-        }
-
-    def __get_signed_headers(self, payload: str) -> dict[str, str]:
-        """Generate signed headers using the active company's credentials."""
-
+    def get_active_api_secret(self) -> str:
+        """Returns the current API secret based on multi-company configuration."""
         if self.multiple_companies and self.active_company:
-            api_key = getattr(self, f"company_{self.active_company}_api_key")
-            api_secret = self.get_password(f"company_{self.active_company}_api_secret")
+            return self.get_password(f"company_{self.active_company}_api_secret")
+        return self.get_password("api_secret")
 
-        else:
-            api_key = self.api_key
-            api_secret = self.get_password("api_secret")
 
-        signature = self.__sign_payload(payload, api_secret)
-
-        return {
-            "X-Api-Key": api_key,
-            "X-Api-Signature": signature,
-            "X-Application": "ESkill",
-            "X-App-Station": "ERPNext",
-            "Content-Type": "application/json",
-        }
-
-    def __process_mappings(self, route_name: str, mapping_dict: dict[str, str]):
-        """Processes changes made to the mappaing tables.
-
-        Args:
-            route_name (str): The path for the mapping in Fiscal Harmony.\
-                Should be "tax" or "currency".
-            mapping_dict (dict[str, str]): Dictionary of Fiscal Harmony fields\
-                mapped to ERPNext fields."""
-
-        if not self.user_profile_id:
-            return
-
-        def get_data(mapping) -> str:
-            data = {"UserId": int(self.user_profile_id)}
-
-            for fh_field, erp_field in mapping_dict.items():
-                data[fh_field] = mapping.get(erp_field)
-
-            if mapping.get(f"{route_name}_id"):
-                data["Id"] = mapping.get(f"{route_name}_id")
-
-            return self.__encode_data(data)
-
-        mappings: set[int] = set()
-        posting_url = self.__get_request_url(f"/{route_name}mapping")
-        for mapping in self.get(f"{route_name}_mappings"):
-            data = get_data(mapping)
-            log_data: FiscalHarmonyLogData = {
-                "request_url": posting_url,
-                "payload": json.dumps(json.loads(data), indent=2),
-            }
-            headers = self.__get_signed_headers(data)
-            try:
-                if mapping.get(f"{route_name}_id"):
-                    url = self.__get_request_url(
-                        f"/{route_name}mapping/{mapping.get(route_name + '_id')}"
-                    )
-                    log_data["request_url"] = url
-                    response = requests.put(
-                        url,
-                        headers=headers,
-                        data=data,
-                        timeout=FiscalHarmonySettings.__TIMEOUT,
-                    )
-                    mappings.add(int(mapping.get(f"{route_name}_id")))
-
-                else:
-                    response = requests.post(
-                        posting_url,
-                        headers=headers,
-                        data=data,
-                        timeout=FiscalHarmonySettings.__TIMEOUT,
-                    )
-
-                    if response.ok:
-                        mapping.set(f"{route_name}_id", response.json()["Id"])
-                        mappings.add(int(mapping.get(f"{route_name}_id")))
-
-                log_data["response_status_code"] = response.status_code
-                log_data["response"] = json.dumps(response.json(), indent=2)
-                response.raise_for_status()
-
-                log_data["status"] = "Success"
-                self.__update_last_successful_request()
-
-            except TimeoutError:
-                log_data["status"] = "Failure"
-                log_data["error_details"] = (
-                    f"Failed when uploading/updating {route_name} mappings."
-                )
-                log_data["response_status_code"] = 500
-
-            except requests.exceptions.HTTPError:
-                log_data["error_details"] = (
-                    f"{response.reason} whilst uploading/updating {route_name} mappings."
-                )
-                match response.status_code:
-                    case 400:
-                        log_data["status"] = "Invalid JSON"
-                    case 401:
-                        log_data["status"] = "Unauthorised"
-                        log_data["signature_valid"] = False
-                    case _:
-                        log_data["status"] = "Failure"
-
-            finally:
-                fh_log(log_data)
-
-            if not response.ok:
-                frappe.throw(
-                    f"Failed to validate {route_name} mappings.<br/>{response.reason}",
-                    title=FiscalHarmonySettings.__ERROR_TITLE,
-                )
-
-        self.save()
-
-        response = self.__make_request(f"/{route_name}mapping")
-        if not response.ok:
-            return
-
-        for mapping in response.json():
-            if mapping["Id"] in mappings:
-                continue
-
-            url = self.__get_request_url(f"/{route_name}mapping/{mapping['Id']}")
-            log_data: FiscalHarmonyLogData = {
-                "request_url": posting_url,
-            }
-
-            try:
-                requests.delete(
-                    url,
-                    headers=self.__get_headers(),
-                    timeout=FiscalHarmonySettings.__TIMEOUT,
-                )
-
-                log_data["response_status_code"] = response.status_code
-                log_data["response"] = json.dumps(response.json(), indent=2)
-                response.raise_for_status()
-
-                log_data["status"] = "Success"
-                self.__update_last_successful_request()
-
-            except TimeoutError:
-                log_data["status"] = "Failure"
-                log_data["error_details"] = (
-                    f"Timed out whilst deleting {route_name} mappings."
-                )
-                log_data["response_status_code"] = 500
-
-            except requests.exceptions.HTTPError:
-                log_data["error_details"] = (
-                    f"{response.reason} whilst deleting {route_name} mappings."
-                )
-                match response.status_code:
-                    case 400:
-                        log_data["status"] = "Invalid JSON"
-                    case 401:
-                        log_data["status"] = "Unauthorised"
-                        log_data["signature_valid"] = False
-                    case _:
-                        log_data["status"] = "Failure"
-
-            finally:
-                fh_log(log_data)
-
-        frappe.msgprint(
-            f"{route_name.capitalize()} mappings successfully validated.",
-            f"Validate {route_name.capitalize()} Mappings",
-        )
-
-        self.__update_last_successful_request()
-
-    def __sign_payload(self, payload: str, api_secret: str) -> str:
-        """Sign the payload using the provided secret."""
-        hasher = hmac.new(
-            api_secret.encode("utf-8"),
-            msg=payload.encode("utf-8"),
-            digestmod=hashlib.sha256,
-        )
-        return base64.b64encode(hasher.digest()).decode("utf-8")
-
-    def __update_last_successful_request(self):
-        """Updates the last_successful_request field."""
-
-        self.last_successful_request = datetime.now()
-        self.save(ignore_permissions=True)
