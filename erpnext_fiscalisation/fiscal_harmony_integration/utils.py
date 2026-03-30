@@ -19,14 +19,10 @@ if TYPE_CHECKING:
     from frappe.model.document import Document
 
 class FiscalHarmonyBase:
-    """Shared logic for Fiscal Harmony API interactions."""
+    """Mixin for Fiscal Harmony API interactions."""
 
     __TIMEOUT = 30
     __ERROR_TITLE = "Fiscal Harmony Error"
-
-    def __init__(self, doc: "Document"):
-        self.doc = doc
-        self.__TIMEOUT = 30
 
     def make_request(self, route: str) -> requests.Response:
         request_url = self.get_request_url(route)
@@ -51,7 +47,7 @@ class FiscalHarmonyBase:
             log_data["status"] = "Success"
             self.update_last_successful_request()
 
-        except TimeoutError:
+        except (TimeoutError, requests.exceptions.Timeout):
             log_data["status"] = "Failure"
             log_data["error_details"] = ""
             log_data["response_status_code"] = 500
@@ -69,7 +65,7 @@ class FiscalHarmonyBase:
         return response
 
     def get_request_url(self, route: str) -> str:
-        endpoint = self.doc.endpoint
+        endpoint = self.endpoint
         if route.startswith(r"/"):
             return endpoint + route
         return f"{endpoint}/{route}"
@@ -97,14 +93,15 @@ class FiscalHarmonyBase:
         }
 
     def get_api_key(self) -> str:
-        if hasattr(self.doc, "get_active_api_key"):
-            return self.doc.get_active_api_key()
-        return self.doc.api_key
+        if hasattr(self, "get_active_api_key"):
+            return self.get_active_api_key()
+        return self.api_key
 
     def get_api_secret(self) -> str:
-        if hasattr(self.doc, "get_active_api_secret"):
-            return self.doc.get_active_api_secret()
-        return self.doc.get_password("api_secret")
+        if hasattr(self, "get_active_api_secret"):
+            return self.get_active_api_secret()
+
+        return self.get_password("api_secret")
 
     def sign_payload(self, payload: str, api_secret: str) -> str:
         hasher = hmac.new(
@@ -115,8 +112,8 @@ class FiscalHarmonyBase:
         return base64.b64encode(hasher.digest()).decode("utf-8")
 
     def update_last_successful_request(self):
-        self.doc.last_successful_request = datetime.now()
-        self.doc.save(ignore_permissions=True)
+        self.last_successful_request = datetime.now()
+        self.save(ignore_permissions=True)
 
     def encode_data(self, data: dict) -> str:
         return json.dumps(data, separators=(",", ":"), sort_keys=True)
@@ -282,6 +279,13 @@ class FiscalHarmonyBase:
             log_data["response_status_code"] = 500
             fh_log(log_data)
 
+        except (TimeoutError, requests.exceptions.Timeout):
+            signature.is_retry = True
+            log_data["status"] = "Failure"
+            log_data["error_details"] = "Timed out whilst signing transaction."
+            log_data["response_status_code"] = 500
+            fh_log(log_data)
+
         except requests.exceptions.HTTPError:
             signature.is_retry = True
             log_data["error_details"] = response.reason
@@ -340,22 +344,6 @@ class FiscalHarmonyBase:
             log_data["status"] = "Success"
             self.update_last_successful_request()
 
-        except (TimeoutError, requests.exceptions.Timeout):
-            signature.is_retry = True
-            log_data["status"] = "Failure"
-            log_data["error_details"] = "Timed out whilst signing transaction."
-            log_data["response_status_code"] = 500
-            fh_log(log_data)
-
-        except requests.exceptions.HTTPError:
-            signature.is_retry = True
-            log_data["error_details"] = response.reason
-            if response.status_code == 401:
-                log_data["status"] = "Unauthorised"
-            else:
-                log_data["status"] = "Failure"
-            fh_log(log_data)
-
         except Exception as e:
             signature.is_retry = True
             log_data["status"] = "Failure"
@@ -366,11 +354,11 @@ class FiscalHarmonyBase:
             signature.save(ignore_permissions=True)
 
     def process_mappings(self, route_name: str, mapping_dict: dict[str, str]):
-        if not self.doc.user_profile_id:
+        if not self.user_profile_id:
             return
 
         def get_data(mapping) -> str:
-            data = {"UserId": int(self.doc.user_profile_id)}
+            data = {"UserId": int(self.user_profile_id)}
             for fh_field, erp_field in mapping_dict.items():
                 data[fh_field] = mapping.get(erp_field)
             if mapping.get(f"{route_name}_id"):
@@ -379,7 +367,10 @@ class FiscalHarmonyBase:
 
         mappings: set[int] = set()
         posting_url = self.get_request_url(f"/{route_name}mapping")
-        for mapping in self.doc.get(f"{route_name}_mappings"):
+
+        relevant_mappings = self.get(f"{route_name}_mappings")
+
+        for mapping in relevant_mappings:
             data = get_data(mapping)
             log_data: FiscalHarmonyLogData = {
                 "request_url": posting_url,
@@ -425,7 +416,7 @@ class FiscalHarmonyBase:
             finally:
                 fh_log(log_data)
 
-        self.doc.save()
+        self.save()
 
         response = self.make_request(f"/{route_name}mapping")
         if not response.ok:
@@ -455,7 +446,7 @@ class FiscalHarmonyBase:
             finally:
                 fh_log(log_data)
 
-        frappe.msgprint(
-            f"{route_name.capitalize()} mappings successfully validated.",
-            f"Validate {route_name.capitalize()} Mappings",
-        )
+        # frappe.msgprint(
+        #     f"{route_name.capitalize()} mappings successfully validated.",
+        #     f"Validate {route_name.capitalize()} Mappings",
+        # )

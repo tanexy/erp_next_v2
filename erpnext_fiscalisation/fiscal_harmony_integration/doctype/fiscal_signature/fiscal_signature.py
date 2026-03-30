@@ -167,9 +167,8 @@ class FiscalSignature(Document):
                 warehouse = frappe.db.get_value("Sales Invoice Item", {"parent": self.sales_invoice}, "warehouse")
 
             if warehouse:
-                warehouse_settings_name = frappe.db.exists("Fiscal Harmony Warehouse Settings", {"warehouse": warehouse})
-                if warehouse_settings_name:
-                    return frappe.get_doc("Fiscal Harmony Warehouse Settings", warehouse_settings_name)
+                if frappe.db.exists("Fiscal Harmony Warehouse Settings", warehouse):
+                    return frappe.get_doc("Fiscal Harmony Warehouse Settings", warehouse)
 
         return fiscal_settings
 
@@ -300,6 +299,14 @@ class FiscalSignature(Document):
 
             # Throw out an error message if a tax code can't be found.
             if not tax_code:
+                frappe.throw(
+                    "Failed to generate fiscal payload for invoice "
+                    f"{transaction.name} due to no tax templates being mapped.",
+                    title="Fiscalisation Error",
+                )
+
+            # Throw out an error message if a tax code can't be found.
+            if not tax_code or tax_code not in tax_codes:
                 frappe.throw(
                     "Failed to generate fiscal payload for invoice "
                     f"{transaction.name} due to no tax templates being mapped.",
