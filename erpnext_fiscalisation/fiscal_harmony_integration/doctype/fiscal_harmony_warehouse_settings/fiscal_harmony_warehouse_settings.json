@@ -5,7 +5,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "branch",
+  "warehouse",
   "endpoint",
   "user_profile_id",
   "column_break_ciyx",
@@ -27,10 +27,10 @@
  ],
  "fields": [
   {
-   "fieldname": "branch",
+   "fieldname": "warehouse",
    "fieldtype": "Link",
-   "label": "Branch",
-   "options": "Branch",
+   "label": "Warehouse",
+   "options": "Warehouse",
    "reqd": 1,
    "unique": 1
   },
@@ -126,21 +126,21 @@
   {
    "bold": 1,
    "default": "0",
-   "description": "Checking this field will block the generation of signatures when submitting invoices for this branch.",
+   "description": "Checking this field will block the generation of signatures when submitting invoices for this warehouse.",
    "fieldname": "disabled",
    "fieldtype": "Check",
    "label": "Disable Fiscalisation"
   },
   {
    "default": "0",
-   "description": "Whether to include HS Codes in invoice uploads for this branch.",
+   "description": "Whether to include HS Codes in invoice uploads for this warehouse.",
    "fieldname": "include_hs_codes",
    "fieldtype": "Check",
    "label": "Include HS Codes"
   },
   {
    "default": "0",
-   "description": "Whether to attach a PDF made from the default print format or the downloaded PDF from Fiscal Harmony for this branch.",
+   "description": "Whether to attach a PDF made from the default print format or the downloaded PDF from Fiscal Harmony for this warehouse.",
    "fieldname": "attach_local_print",
    "fieldtype": "Check",
    "label": "Attach Local Print"
@@ -151,9 +151,9 @@
  "modified": "2025-01-24 15:30:00.000000",
  "modified_by": "Administrator",
  "module": "Fiscal Harmony Integration",
- "name": "Fiscal Harmony Branch Settings",
+ "name": "Fiscal Harmony Warehouse Settings",
  "naming_rule": "By fieldname",
- "autoname": "field:branch",
+ "autoname": "field:warehouse",
  "owner": "Administrator",
  "permissions": [
   {

@@ -14,7 +14,7 @@
   "disabled",
   "include_hs_codes",
   "attach_local_print",
-  "has_multiple_branches",
+  "enable_multiple_branches",
   "authentication_section",
   "api_key",
   "column_break_iofx",
@@ -158,10 +158,10 @@
   },
   {
    "default": "0",
-   "description": "Enable this to allow branch-specific fiscalisation settings (API keys, secrets, mappings).",
-   "fieldname": "has_multiple_branches",
+   "description": "Enable this to allow warehouse-specific fiscalisation settings (API keys, secrets, mappings).",
+   "fieldname": "enable_multiple_branches",
    "fieldtype": "Check",
-   "label": "Has Multiple Branches"
+   "label": "Enable Multiple Branches"
   },
   {
     "fieldname": "multiple_companies_section",

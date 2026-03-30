@@ -4,14 +4,14 @@
 import frappe
 from frappe.model.document import Document
 
-class FiscalHarmonyBranchSettings(Document):
+class FiscalHarmonyWarehouseSettings(Document):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         from erpnext_fiscalisation.fiscal_harmony_integration.utils import FiscalHarmonyBase
         self.api = FiscalHarmonyBase(self)
 
     def validate(self):
-        """Validate the Fiscal Harmony Branch Settings form data."""
+        """Validate the Fiscal Harmony Warehouse Settings form data."""
         import re
         url_regex = r"^https://[a-z]+\.([a-z]+\.)*(co\.zw|com)/[a-z]+$"
         if not re.match(url_regex, self.endpoint):
@@ -94,7 +94,7 @@ class FiscalHarmonyBranchSettings(Document):
     @frappe.whitelist()
     def get_device_info(self):
         """Displays the Fiscal Harmony fiscal device config to the user."""
-        return self.api.get_device_info("Branch Fiscal Device Info")
+        return self.api.get_device_info("Warehouse Fiscal Device Info")
 
     @frappe.whitelist()
     def validate_api_details(self, api_key: str, api_secret: str):
@@ -113,7 +113,7 @@ class FiscalHarmonyBranchSettings(Document):
                 headers=headers,
                 timeout=30,
             )
-        except TimeoutError:
+        except (TimeoutError, requests.exceptions.Timeout):
             frappe.throw(
                 "Fiscal Harmony took too long to respond. Please try again later."
             )

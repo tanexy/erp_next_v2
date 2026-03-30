@@ -157,15 +157,19 @@ class FiscalSignature(Document):
         return self.__get_invoice_data(transaction)
 
     def get_fiscal_settings(self):
-        """Determine and return the appropriate fiscal settings (Branch or Global)."""
+        """Determine and return the appropriate fiscal settings (Warehouse or Global)."""
 
         fiscal_settings = frappe.get_doc("Fiscal Harmony Settings")
-        if fiscal_settings.has_multiple_branches:
-            branch = frappe.get_value("Sales Invoice", self.sales_invoice, "branch")
-            if branch:
-                branch_settings_name = frappe.db.exists("Fiscal Harmony Branch Settings", {"branch": branch})
-                if branch_settings_name:
-                    return frappe.get_doc("Fiscal Harmony Branch Settings", branch_settings_name)
+        if fiscal_settings.enable_multiple_branches:
+            # Try to get warehouse from the first item if not set on the document
+            warehouse = frappe.get_value("Sales Invoice", self.sales_invoice, "set_warehouse")
+            if not warehouse:
+                warehouse = frappe.db.get_value("Sales Invoice Item", {"parent": self.sales_invoice}, "warehouse")
+
+            if warehouse:
+                warehouse_settings_name = frappe.db.exists("Fiscal Harmony Warehouse Settings", {"warehouse": warehouse})
+                if warehouse_settings_name:
+                    return frappe.get_doc("Fiscal Harmony Warehouse Settings", warehouse_settings_name)
 
         return fiscal_settings
 
