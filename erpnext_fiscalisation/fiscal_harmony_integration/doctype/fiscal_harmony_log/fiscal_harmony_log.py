@@ -39,10 +39,10 @@ class FiscalHarmonyLogData(TypedDict):
         request_url (str | None, optional): The URL that the request was posted to.\
             Defaults to None."""
 
-    status: str
+    status: Optional[str]
     payload: Optional[str]
-    response: str
-    response_status_code: int
+    response: Optional[str]
+    response_status_code: Optional[int]
     signature_valid: Optional[bool]
     request_id: Optional[str]
     error_details: Optional[str]

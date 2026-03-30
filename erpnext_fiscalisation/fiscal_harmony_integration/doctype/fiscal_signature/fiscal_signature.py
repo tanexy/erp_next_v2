@@ -58,9 +58,7 @@ class FiscalSignature(Document):
                 title="Authorisation Error",
             )
 
-        fiscal_settings: FiscalHarmonySettings = frappe.get_doc(
-            "Fiscal Harmony Settings"
-        )
+        fiscal_settings = self.get_fiscal_settings()
         fiscal_settings.fetch_signature_data(self)
 
     @frappe.whitelist()
@@ -97,9 +95,7 @@ class FiscalSignature(Document):
         """Download or generate the PDF using default print formats then attach it to the linked\
             invoice."""
 
-        fiscal_settings: FiscalHarmonySettings = frappe.get_doc(
-            "Fiscal Harmony Settings"
-        )
+        fiscal_settings = self.get_fiscal_settings()
 
         # Fetch the PDF content.
         if fiscal_settings.attach_local_print:
@@ -160,12 +156,21 @@ class FiscalSignature(Document):
 
         return self.__get_invoice_data(transaction)
 
+    def get_fiscal_settings(self):
+        """Determine and return the appropriate fiscal settings (Branch or Global)."""
+
+        branch = frappe.get_value("Sales Invoice", self.sales_invoice, "branch")
+        if branch:
+            branch_settings_name = frappe.db.exists("Fiscal Harmony Branch Settings", {"branch": branch})
+            if branch_settings_name:
+                return frappe.get_doc("Fiscal Harmony Branch Settings", branch_settings_name)
+
+        return frappe.get_doc("Fiscal Harmony Settings")
+
     def __fiscalise(self):
         """Submit the signature details for fiscalisation."""
 
-        fiscal_settings: FiscalHarmonySettings = frappe.get_doc(
-            "Fiscal Harmony Settings"
-        )
+        fiscal_settings = self.get_fiscal_settings()
         fiscal_settings.fiscalise_transaction(self)
 
     def __get_invoice_data(self, transaction: SalesInvoice) -> dict[str,]:
@@ -177,8 +182,15 @@ class FiscalSignature(Document):
         Returns:
             dict[str,]: The generated payload to transmit to FiscalHarmony."""
 
+        fiscal_settings = self.get_fiscal_settings()
         buyer_contact = self.__get_buyer_contact(transaction)
         line_items = self.__get_line_items(transaction)
+
+        currency_code = transaction.currency
+        for mapping in fiscal_settings.currency_mappings:
+            if mapping.system_currency == transaction.currency:
+                currency_code = mapping.fiscal_harmony_currency
+                break
 
         data = {
             "InvoiceId": transaction.name,
@@ -195,7 +207,7 @@ class FiscalSignature(Document):
             "SubTotal": round(transaction.net_total, 2),
             "TotalTax": round(transaction.total_taxes_and_charges, 2),
             "Total": round(transaction.grand_total, 2),
-            "CurrencyCode": transaction.currency,
+            "CurrencyCode": currency_code,
             "IsRetry": bool(self.is_retry),
         }
 
@@ -210,8 +222,15 @@ class FiscalSignature(Document):
         Returns:
             dict[str,]: The generated payload to transmit to FiscalHarmony."""
 
+        fiscal_settings = self.get_fiscal_settings()
         buyer_contact = self.__get_buyer_contact(transaction)
         line_items = self.__get_line_items(transaction)
+
+        currency_code = transaction.currency
+        for mapping in fiscal_settings.currency_mappings:
+            if mapping.system_currency == transaction.currency:
+                currency_code = mapping.fiscal_harmony_currency
+                break
 
         data = {
             "CreditNoteId": transaction.name,
@@ -228,7 +247,7 @@ class FiscalSignature(Document):
             "SubTotal": round(abs(transaction.net_total), 2),
             "TotalTax": round(abs(transaction.total_taxes_and_charges), 2),
             "Total": round(abs(transaction.grand_total), 2),
-            "CurrencyCode": transaction.currency,
+            "CurrencyCode": currency_code,
             "IsRetry": bool(self.is_retry),
         }
 
@@ -243,13 +262,11 @@ class FiscalSignature(Document):
         Returns:
             list[dict]: The list of dictionaries detailing the sold items."""
 
-        fiscal_settings: FiscalHarmonySettings = frappe.get_doc(
-            "Fiscal Harmony Settings"
-        )
-        tax_codes = set()
+        fiscal_settings = self.get_fiscal_settings()
+        tax_codes = {}
         default_tax_code = None
         for tax_mapping in fiscal_settings.tax_mappings:
-            tax_codes.add(tax_mapping.tax_code)
+            tax_codes[tax_mapping.tax_code] = tax_mapping.destination_tax_id
             if tax_mapping.is_default:
                 default_tax_code = tax_mapping.tax_code
 
@@ -283,7 +300,7 @@ class FiscalSignature(Document):
                     title="Fiscalisation Error",
                 )
 
-            item_dict["TaxCode"] = tax_code
+            item_dict["TaxCode"] = tax_codes[tax_code]
 
             # Include HS Codes if the setting is enabled.
             if fiscal_settings.include_hs_codes:
