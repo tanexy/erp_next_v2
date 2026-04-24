@@ -294,64 +294,55 @@ class FiscalSignature(Document):
         Returns:
             list[dict]: The list of dictionaries detailing the sold items."""
 
-        fiscal_settings = self.get_fiscal_settings()
-        warehouse = transaction.set_warehouse or (transaction.items[0].warehouse if transaction.items else None)
+        fiscal_settings: FiscalHarmonySettings = frappe.get_doc(
+            "Fiscal Harmony Settings"
+        )
 
-        global_settings = fiscal_settings if getattr(fiscal_settings, "doctype", None) == "Fiscal Harmony Settings" else fiscal_settings.parent_doc
-        tax_codes = {}
-        default_tax_code = None
-
-        # Collect all relevant tax mappings for this warehouse (or global)
-        for tax_mapping in global_settings.tax_mappings:
-            if not tax_mapping.warehouse or tax_mapping.warehouse == warehouse:
-                # Prioritize warehouse-specific mapping
-                if tax_mapping.warehouse == warehouse or tax_mapping.tax_code not in tax_codes:
-                    tax_codes[tax_mapping.tax_code] = tax_mapping.destination_tax_id
-
-                if tax_mapping.is_default:
-                    # Warehouse specific default takes precedence
-                    if tax_mapping.warehouse == warehouse or not default_tax_code:
-                        default_tax_code = tax_mapping.tax_code
+        # Build a mapping from ERPNext template name -> Fiscal Harmony Tax ID
+        tax_template_to_id: dict[str, int] = {}
+        default_tax_id = None
+        for tax_mapping in fiscal_settings.tax_mappings:
+            tax_template_to_id[tax_mapping.tax_code] = tax_mapping.destination_tax_id
+            if tax_mapping.is_default:
+                default_tax_id = tax_mapping.destination_tax_id
 
         line_items: list[dict] = []
         for item in transaction.items:
             item_dict = {
                 "Description": item.item_name,
                 "UnitAmount": round(abs(item.rate), 3),
-                "TaxCode": "S",
+                "TaxCode": None,  # Will be resolved below
                 "LineAmount": round(abs(item.amount), 2),
                 "DiscountAmount": round(abs(item.discount_amount), 2) or None,
                 "Quantity": round(abs(item.qty), 3),
             }
 
-            # Work out the tax code, trying first for an item-specific tax code
-            # before moving on to the document tax code, and then the default
-            # if no valid tax code is set.
-            tax_code = None
-            if item.item_tax_template in tax_codes:
-                tax_code = item.item_tax_template
-            elif transaction.taxes_and_charges in tax_codes:
-                tax_code = transaction.taxes_and_charges
-            elif default_tax_code:
-                tax_code = default_tax_code
+            # Work out the tax ID per line item:
+            # 1. Item-level tax template (item specific)
+            # 2. Document-level tax template (whole invoice)
+            # 3. Default tax mapping from settings
+            # Using a sentinel to safely handle destination_tax_id = 0
+            _MISSING = object()
+            tax_id = None
+            for key in (item.item_tax_template, transaction.taxes_and_charges):
+                result = tax_template_to_id.get(key, _MISSING)
+                if result is not _MISSING:
+                    tax_id = result
+                    break
 
-            # Throw out an error message if a tax code can't be found.
-            if not tax_code:
+            if tax_id is None:
+                tax_id = default_tax_id
+
+            # Throw an error if no tax ID can be resolved for this line item.
+            if tax_id is None:
                 frappe.throw(
                     "Failed to generate fiscal payload for invoice "
-                    f"{transaction.name} due to no tax templates being mapped.",
+                    f"{transaction.name} due to no tax templates being mapped "
+                    f'for item "{item.item_name}".',
                     title="Fiscalisation Error",
                 )
 
-            # Throw out an error message if a tax code can't be found.
-            if not tax_code or tax_code not in tax_codes:
-                frappe.throw(
-                    "Failed to generate fiscal payload for invoice "
-                    f"{transaction.name} due to no tax templates being mapped.",
-                    title="Fiscalisation Error",
-                )
-
-            item_dict["TaxCode"] = tax_codes[tax_code]
+            item_dict["TaxCode"] = tax_id
 
             # Include HS Codes if the setting is enabled.
             if fiscal_settings.include_hs_codes:
@@ -370,7 +361,7 @@ class FiscalSignature(Document):
                         "fh_hs_code",
                     )
 
-                # Throw an error message if no HS Code is found.
+                # Throw an error if no HS Code is found for this line item.
                 if not hs_code:
                     frappe.throw(
                         "Failed to generate fiscal payload for invoice "
@@ -384,7 +375,6 @@ class FiscalSignature(Document):
             line_items.append(item_dict)
 
         return line_items
-
     def __get_buyer_contact(self, transaction: SalesInvoice) -> dict[str]:
         """Returns a dictionary detailing the customer information.
 
