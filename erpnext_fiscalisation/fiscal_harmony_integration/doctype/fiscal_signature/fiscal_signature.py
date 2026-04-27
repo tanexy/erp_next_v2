@@ -314,6 +314,26 @@ class FiscalSignature(Document):
             if resolved is not None:
                 doc_tax_account_to_id[tax_row.account_head] = resolved
 
+        # ── TEMPORARY DEBUG ──────────────────────────────────────────────
+        print("\n===== TAX DEBUG =====")
+        print(f"tax_template_to_id keys: {list(tax_template_to_id.keys())}")
+        print(f"default_tax_id: {default_tax_id}")
+        print(f"transaction.taxes_and_charges: '{transaction.taxes_and_charges}'")
+        print(f"doc_tax_account_to_id: {doc_tax_account_to_id}")
+        for tax_row in transaction.taxes:
+            print(f"  tax_row.account_head: '{tax_row.account_head}'")
+        for item in transaction.items:
+            print(f"item '{item.item_name}': item_tax_template='{item.item_tax_template}'")
+            if item.item_tax_template:
+                item_tax_rows = frappe.get_all(
+                    "Item Tax Template Detail",
+                    filters={"parent": item.item_tax_template},
+                    fields=["tax_type"],
+                )
+                print(f"  Item Tax Template Detail rows: {item_tax_rows}")
+        print("===== END DEBUG =====\n")
+        # ── END DEBUG ────────────────────────────────────────────────────
+
         line_items: list[dict] = []
         for item in transaction.items:
 
