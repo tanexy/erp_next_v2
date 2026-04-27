@@ -306,30 +306,56 @@ class FiscalSignature(Document):
             if tax_mapping.is_default:
                 default_tax_id = tax_mapping.destination_tax_id
 
+        # Build a mapping from account head -> tax ID using the transaction's
+        # actual tax rows, as a fallback when template names don't match directly
+        doc_tax_account_to_id: dict[str, int] = {}
+        for tax_row in transaction.taxes:
+            resolved = tax_template_to_id.get(tax_row.account_head)
+            if resolved is not None:
+                doc_tax_account_to_id[tax_row.account_head] = resolved
+
         line_items: list[dict] = []
         for item in transaction.items:
-            item_dict = {
-                "Description": item.item_name,
-                "UnitAmount": round(abs(item.rate), 3),
-                "TaxCode": None,  # Will be resolved below
-                "LineAmount": round(abs(item.amount), 2),
-                "DiscountAmount": round(abs(item.discount_amount), 2) or None,
-                "Quantity": round(abs(item.qty), 3),
-            }
 
-            # Work out the tax ID per line item:
-            # 1. Item-level tax template (item specific)
-            # 2. Document-level tax template (whole invoice)
-            # 3. Default tax mapping from settings
-            # Using a sentinel to safely handle destination_tax_id = 0
+            # Resolve tax ID with explicit priority:
+            # 1. Item-level tax template (most specific)
+            # 2. Item tax detail rows (account head lookup)
+            # 3. Document-level tax rows (account head lookup)
+            # 4. Document-level taxes_and_charges template name
+            # 5. Global default from settings
             _MISSING = object()
             tax_id = None
-            for key in (item.item_tax_template, transaction.taxes_and_charges):
-                result = tax_template_to_id.get(key, _MISSING)
+
+            # 1. Item-level tax template
+            if item.item_tax_template:
+                result = tax_template_to_id.get(item.item_tax_template, _MISSING)
                 if result is not _MISSING:
                     tax_id = result
-                    break
 
+            # 2. Item tax detail rows — resolve via account head on the item's tax template
+            if tax_id is None and item.item_tax_template:
+                item_tax_rows = frappe.get_all(
+                    "Item Tax Template Detail",
+                    filters={"parent": item.item_tax_template},
+                    fields=["tax_type"],
+                )
+                for row in item_tax_rows:
+                    result = tax_template_to_id.get(row.tax_type, _MISSING)
+                    if result is not _MISSING:
+                        tax_id = result
+                        break
+
+            # 3. Document-level tax rows matched by account head
+            if tax_id is None and doc_tax_account_to_id:
+                tax_id = next(iter(doc_tax_account_to_id.values()), None)
+
+            # 4. Document-level taxes_and_charges template name
+            if tax_id is None and transaction.taxes_and_charges:
+                result = tax_template_to_id.get(transaction.taxes_and_charges, _MISSING)
+                if result is not _MISSING:
+                    tax_id = result
+
+            # 5. Global default
             if tax_id is None:
                 tax_id = default_tax_id
 
@@ -342,7 +368,14 @@ class FiscalSignature(Document):
                     title="Fiscalisation Error",
                 )
 
-            item_dict["TaxCode"] = tax_id
+            item_dict = {
+                "Description": item.item_name,
+                "UnitAmount": round(abs(item.rate), 3),
+                "TaxCode": tax_id,
+                "LineAmount": round(abs(item.amount), 2),
+                "DiscountAmount": round(abs(item.discount_amount), 2) or None,
+                "Quantity": round(abs(item.qty), 3),
+            }
 
             # Include HS Codes if the setting is enabled.
             if fiscal_settings.include_hs_codes:
