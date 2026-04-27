@@ -298,85 +298,27 @@ class FiscalSignature(Document):
             "Fiscal Harmony Settings"
         )
 
-        # Build a mapping from ERPNext template name -> Fiscal Harmony Tax ID
-        tax_template_to_id: dict[str, int] = {}
+        # Build a mapping from tax code -> Fiscal Harmony Tax ID
+        tax_code_to_id: dict[str, int] = {}
         default_tax_id = None
         for tax_mapping in fiscal_settings.tax_mappings:
-            tax_template_to_id[tax_mapping.tax_code] = tax_mapping.destination_tax_id
+            tax_code_to_id[tax_mapping.tax_code] = tax_mapping.destination_tax_id
             if tax_mapping.is_default:
                 default_tax_id = tax_mapping.destination_tax_id
-
-        # Build a mapping from account head -> tax ID using the transaction's
-        # actual tax rows, as a fallback when template names don't match directly
-        doc_tax_account_to_id: dict[str, int] = {}
-        for tax_row in transaction.taxes:
-            resolved = tax_template_to_id.get(tax_row.account_head)
-            if resolved is not None:
-                doc_tax_account_to_id[tax_row.account_head] = resolved
-
-        # ── TEMPORARY DEBUG ──────────────────────────────────────────────
-        print("\n===== TAX DEBUG =====")
-        print(f"tax_template_to_id keys: {list(tax_template_to_id.keys())}")
-        print(f"default_tax_id: {default_tax_id}")
-        print(f"transaction.taxes_and_charges: '{transaction.taxes_and_charges}'")
-        print(f"doc_tax_account_to_id: {doc_tax_account_to_id}")
-        for tax_row in transaction.taxes:
-            print(f"  tax_row.account_head: '{tax_row.account_head}'")
-        for item in transaction.items:
-            print(f"item '{item.item_name}': item_tax_template='{item.item_tax_template}'")
-            if item.item_tax_template:
-                item_tax_rows = frappe.get_all(
-                    "Item Tax Template Detail",
-                    filters={"parent": item.item_tax_template},
-                    fields=["tax_type"],
-                )
-                print(f"  Item Tax Template Detail rows: {item_tax_rows}")
-        print("===== END DEBUG =====\n")
-        # ── END DEBUG ────────────────────────────────────────────────────
 
         line_items: list[dict] = []
         for item in transaction.items:
 
             # Resolve tax ID with explicit priority:
             # 1. Item-level tax template (most specific)
-            # 2. Item tax detail rows (account head lookup)
-            # 3. Document-level tax rows (account head lookup)
-            # 4. Document-level taxes_and_charges template name
-            # 5. Global default from settings
-            _MISSING = object()
+            # 2. Document-level taxes_and_charges template
+            # 3. Global default from settings
             tax_id = None
-
-            # 1. Item-level tax template
-            if item.item_tax_template:
-                result = tax_template_to_id.get(item.item_tax_template, _MISSING)
-                if result is not _MISSING:
-                    tax_id = result
-
-            # 2. Item tax detail rows — resolve via account head on the item's tax template
-            if tax_id is None and item.item_tax_template:
-                item_tax_rows = frappe.get_all(
-                    "Item Tax Template Detail",
-                    filters={"parent": item.item_tax_template},
-                    fields=["tax_type"],
-                )
-                for row in item_tax_rows:
-                    result = tax_template_to_id.get(row.tax_type, _MISSING)
-                    if result is not _MISSING:
-                        tax_id = result
-                        break
-
-            # 3. Document-level tax rows matched by account head
-            if tax_id is None and doc_tax_account_to_id:
-                tax_id = next(iter(doc_tax_account_to_id.values()), None)
-
-            # 4. Document-level taxes_and_charges template name
-            if tax_id is None and transaction.taxes_and_charges:
-                result = tax_template_to_id.get(transaction.taxes_and_charges, _MISSING)
-                if result is not _MISSING:
-                    tax_id = result
-
-            # 5. Global default
-            if tax_id is None:
+            if item.item_tax_template in tax_code_to_id:
+                tax_id = tax_code_to_id[item.item_tax_template]
+            elif transaction.taxes_and_charges in tax_code_to_id:
+                tax_id = tax_code_to_id[transaction.taxes_and_charges]
+            elif default_tax_id is not None:
                 tax_id = default_tax_id
 
             # Throw an error if no tax ID can be resolved for this line item.
